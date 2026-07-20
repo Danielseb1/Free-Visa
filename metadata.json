@@ -1,0 +1,6 @@
+{
+  "name": "Fast Location Share",
+  "description": "ፈጣን የቦታ ማጋሪያ - A fast location sharing app that records and displays real-time coordinates in Google Sheets.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

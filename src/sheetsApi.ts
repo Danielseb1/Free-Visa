@@ -1,6 +1,5 @@
 export interface LocationRecord {
   timestamp: string;
-  name?: string;
   mapUrl: string;
   lat: number;
   lon: number;
@@ -34,14 +33,13 @@ export async function appendLocationRow(
   accessToken: string,
   spreadsheetId: string,
   lat: number,
-  lon: number,
-  name?: string
+  lon: number
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const sheetName = await getFirstSheetName(accessToken, spreadsheetId);
     const mapUrl = `https://www.google.com/maps?q=${lat},${lon}`;
     
-    // We append to column A to E: Timestamp, Employee Name, Map URL, Latitude, Longitude
+    // We append to column A to D: Timestamp, Map URL, Latitude, Longitude
     // Use Amharic/English formatted date string
     const timestamp = new Date().toLocaleString('en-US', {
       year: 'numeric',
@@ -53,11 +51,11 @@ export async function appendLocationRow(
       hour12: true
     });
 
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:E:append?valueInputOption=USER_ENTERED`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:D:append?valueInputOption=USER_ENTERED`;
     
     const body = {
       values: [
-        [timestamp, name || 'Admin', mapUrl, lat, lon]
+        [timestamp, mapUrl, lat, lon]
       ]
     };
 
@@ -89,7 +87,7 @@ export async function getAllLocations(
 ): Promise<LocationRecord[]> {
   try {
     const sheetName = await getFirstSheetName(accessToken, spreadsheetId);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:E`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:D`;
     
     const response = await fetch(url, {
       headers: {
@@ -116,25 +114,13 @@ export async function getAllLocations(
 
     for (let i = startIdx; i < rows.length; i++) {
       const row = rows[i];
-      let timestamp = row[0] || 'N/A';
-      let name = 'Admin';
-      let mapUrl = '';
-      let lat = NaN;
-      let lon = NaN;
-
-      if (row.length >= 5) {
-        name = row[1] || 'N/A';
-        mapUrl = row[2] || '';
-        lat = parseFloat(row[3]);
-        lon = parseFloat(row[4]);
-      } else {
-        mapUrl = row[1] || '';
-        lat = parseFloat(row[2]);
-        lon = parseFloat(row[3]);
-      }
+      const timestamp = row[0] || 'N/A';
+      const mapUrl = row[1] || '';
+      const lat = parseFloat(row[2]);
+      const lon = parseFloat(row[3]);
 
       if (!isNaN(lat) && !isNaN(lon)) {
-        records.push({ timestamp, name, mapUrl, lat, lon });
+        records.push({ timestamp, mapUrl, lat, lon });
       }
     }
 
@@ -149,9 +135,7 @@ export async function getAllLocations(
 function isHeader(row: any[]): boolean {
   if (!row || row.length === 0) return false;
   const firstCol = String(row[0]).toLowerCase();
-  if (firstCol.includes('date') || firstCol.includes('time') || firstCol.includes('ቀን')) return true;
-  const latVal = row.length >= 5 ? parseFloat(row[3]) : parseFloat(row[2]);
-  return isNaN(latVal);
+  return firstCol.includes('date') || firstCol.includes('time') || firstCol.includes('ቀን') || isNaN(parseFloat(row[2]));
 }
 
 // Create a new spreadsheet with the given title and pre-populate with headers
@@ -186,10 +170,10 @@ export async function createNewSpreadsheet(accessToken: string, title: string): 
   const spreadsheetId = data.spreadsheetId;
 
   // Now, write headers to this new spreadsheet
-  const headersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Locations!A1:E1?valueInputOption=USER_ENTERED`;
+  const headersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Locations!A1:D1?valueInputOption=USER_ENTERED`;
   const headersBody = {
     values: [
-      ['Timestamp', 'Employee Name', 'Map URL', 'Latitude', 'Longitude']
+      ['Timestamp', 'Map URL', 'Latitude', 'Longitude']
     ]
   };
 

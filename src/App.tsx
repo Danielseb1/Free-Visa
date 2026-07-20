@@ -21,19 +21,7 @@ import {
   Copy
 } from 'lucide-react';
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
-import { initAuth, googleSignIn, logout, getAccessToken, db, auth } from './googleAuth';
-import { signInAnonymously } from 'firebase/auth';
-import { 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  query, 
-  where, 
-  updateDoc, 
-  doc, 
-  getDocs, 
-  serverTimestamp 
-} from 'firebase/firestore';
+import { initAuth, googleSignIn, logout, getAccessToken } from './googleAuth';
 import { appendLocationRow, getAllLocations, createNewSpreadsheet, type LocationRecord } from './sheetsApi';
 import type { User } from 'firebase/auth';
 
@@ -94,10 +82,7 @@ const TRANSLATIONS = {
     sheetNotFoundTitle: "የጉግል ሺት አልተገኘም (ወይም መግባት አይቻልም)",
     sheetNotFoundDesc: "የተገለጸው የጉግል ሺት መለያ አልተገኘም ወይም ፍቃድ የለዎትም። አዲስ የተዘጋጀ የጉግል ሺት በራስ-ሰር ፈጥረው እዚህ መጠቀም ይችላሉ።",
     createSheetBtn: "አዲስ የጉግል ሺት በራስ-ሰር ፍጠር",
-    creatingSheet: "አዲስ የጉግል ሺት በመፍጠር ላይ...",
-    employeeNameLabel: "ስምዎን ያስገቡ (Your Name)",
-    employeeNamePlaceholder: "ሙሉ ስምዎን እዚህ ያስገቡ (ለምሳሌ፡ ሙሉነህ ከበደ)",
-    nameRequired: "እባክዎ መጀመሪያ ስምዎን ያስገቡ!"
+    creatingSheet: "አዲስ የጉግል ሺት በመፍጠር ላይ..."
   },
   en: {
     title: "Fast Location Share",
@@ -152,10 +137,7 @@ const TRANSLATIONS = {
     sheetNotFoundTitle: "Google Sheet Not Found (or Inaccessible)",
     sheetNotFoundDesc: "The specified Spreadsheet ID was not found or you do not have permission to view it. You can automatically create a brand new configured Google Sheet with one click!",
     createSheetBtn: "Create New Google Sheet Automatically",
-    creatingSheet: "Creating new spreadsheet...",
-    employeeNameLabel: "Enter Your Name",
-    employeeNamePlaceholder: "Type your full name here...",
-    nameRequired: "Please enter your name first!"
+    creatingSheet: "Creating new spreadsheet..."
   }
 };
 
@@ -180,9 +162,6 @@ export default function App() {
   // App Settings & App State
   const [spreadsheetId, setSpreadsheetId] = useState<string>(() => {
     return localStorage.getItem('fast_loc_spreadsheet_id') || DEFAULT_SPREADSHEET_ID;
-  });
-  const [employeeName, setEmployeeName] = useState<string>(() => {
-    return localStorage.getItem('fast_loc_employee_name') || '';
   });
   const [activeTab, setActiveTab] = useState<'share' | 'viewer'>('share');
   const [showSettings, setShowSettings] = useState(false);
@@ -215,15 +194,14 @@ export default function App() {
         setAuthLoading(false);
       },
       () => {
-        // Only set needsAuth to true if we are not in employee mode
         setUser(null);
         setToken(null);
-        setNeedsAuth(role !== 'employee');
+        setNeedsAuth(true);
         setAuthLoading(false);
       }
     );
     return () => unsubscribe();
-  }, [role]);
+  }, []);
 
   // Handle URL parameters for automatic role selection
   useEffect(() => {
@@ -236,82 +214,18 @@ export default function App() {
     }
   }, []);
 
-  // Handle anonymous sign in for employees (completely silent and automatic)
+  // Automatic sharing trigger when authenticated in employee mode
   useEffect(() => {
-    if (role === 'employee' && !user && !authLoading) {
-      signInAnonymously(auth)
-        .then((result) => {
-          setUser(result.user);
-          setNeedsAuth(false);
-        })
-        .catch((err) => {
-          console.error('Anonymous auth failed:', err);
-        });
-    }
-  }, [role, user, authLoading]);
-
-  // Automatic sharing trigger when in employee mode and name is preset
-  useEffect(() => {
-    if (role === 'employee' && employeeName.trim() && !hasAutoTriggered && sharingStatus === 'idle') {
+    if (token && role === 'employee' && !hasAutoTriggered && sharingStatus === 'idle') {
       setHasAutoTriggered(true);
       triggerLocationShare();
     }
-  }, [role, employeeName, hasAutoTriggered, sharingStatus]);
+  }, [token, role, hasAutoTriggered, sharingStatus]);
 
   // Sync spreadsheetId with localStorage
   useEffect(() => {
     localStorage.setItem('fast_loc_spreadsheet_id', spreadsheetId);
   }, [spreadsheetId]);
-
-  // Sync employeeName with localStorage
-  useEffect(() => {
-    localStorage.setItem('fast_loc_employee_name', employeeName);
-  }, [employeeName]);
-
-  // Admin Firestore Listener: automatically synces incoming employee pending coordinates to Google Sheets
-  useEffect(() => {
-    if (role !== 'admin' || !token || !spreadsheetId) return;
-
-    const q = query(collection(db, 'pending_shares'), where('status', '==', 'pending'));
-    const unsubscribe = onSnapshot(q, async (snapshot) => {
-      for (const change of snapshot.docChanges()) {
-        if (change.type === 'added') {
-          const docData = change.doc.data();
-          const docId = change.doc.id;
-          const { name, lat, lon } = docData;
-
-          console.log(`Syncing pending share for ${name} to Google Sheets...`);
-          try {
-            // First lock the document to "syncing" status to avoid double processing
-            await updateDoc(doc(db, 'pending_shares', docId), {
-              status: 'syncing'
-            });
-
-            // Append row to Google Sheets on admin behalf
-            const result = await appendLocationRow(token, spreadsheetId, lat, lon, name);
-            if (result.success) {
-              await updateDoc(doc(db, 'pending_shares', docId), {
-                status: 'synced',
-                syncedAt: serverTimestamp()
-              });
-              console.log(`Successfully synced location row for ${name}!`);
-              loadHistory(true);
-            } else {
-              console.error(`Failed to sync row for ${name}:`, result.error);
-              // Revert to pending so it can be retried
-              await updateDoc(doc(db, 'pending_shares', docId), {
-                status: 'pending'
-              });
-            }
-          } catch (err) {
-            console.error(`Error processing sync for doc ${docId}:`, err);
-          }
-        }
-      }
-    });
-
-    return () => unsubscribe();
-  }, [role, token, spreadsheetId]);
 
   // Fetch sheet history once auth token is available
   useEffect(() => {
@@ -391,17 +305,7 @@ export default function App() {
   };
 
   const triggerLocationShare = () => {
-    if (role === 'employee' && !employeeName.trim()) {
-      setSharingStatus('error');
-      setSharingError(t.nameRequired);
-      return;
-    }
-    if (role !== 'employee' && !token) {
-      setSharingStatus('error');
-      setSharingError('Not signed in with Google');
-      return;
-    }
-
+    if (!token) return;
     setSharingStatus('detecting');
     setSharingError(null);
 
@@ -417,58 +321,21 @@ export default function App() {
         setDetectedCoords({ lat: latitude, lon: longitude, accuracy: Math.round(accuracy) });
         setSharingStatus('saving');
 
-        if (role === 'employee') {
-          try {
-            await addDoc(collection(db, 'pending_shares'), {
-              name: employeeName.trim(),
-              lat: latitude,
-              lon: longitude,
-              accuracy: Math.round(accuracy),
-              timestamp: new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit',
-                second: '2-digit',
-                hour12: true
-              }),
-              status: 'pending',
-              createdAt: serverTimestamp()
-            });
-
-            setSharingStatus('success');
-            setSelectedLocation({
-              timestamp: new Date().toLocaleString(),
-              name: employeeName.trim(),
-              mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
-              lat: latitude,
-              lon: longitude
-            });
-          } catch (err: any) {
-            console.error('Failed to save to Firestore:', err);
-            setSharingStatus('error');
-            setSharingError(err.message || 'Failed to submit location to database.');
-          }
+        const result = await appendLocationRow(token, spreadsheetId, latitude, longitude);
+        if (result.success) {
+          setSharingStatus('success');
+          // Reload the records so the newly shared location appears
+          loadHistory(true);
+          // Set selected location to the newly shared one
+          setSelectedLocation({
+            timestamp: new Date().toLocaleString(),
+            mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
+            lat: latitude,
+            lon: longitude
+          });
         } else {
-          // Admin triggers local share
-          const result = await appendLocationRow(token!, spreadsheetId, latitude, longitude, 'Admin');
-          if (result.success) {
-            setSharingStatus('success');
-            // Reload the records so the newly shared location appears
-            loadHistory(true);
-            // Set selected location to the newly shared one
-            setSelectedLocation({
-              timestamp: new Date().toLocaleString(),
-              name: 'Admin',
-              mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
-              lat: latitude,
-              lon: longitude
-            });
-          } else {
-            setSharingStatus('error');
-            setSharingError(result.error || 'Failed to update Google Sheet.');
-          }
+          setSharingStatus('error');
+          setSharingError(result.error || 'Failed to update Google Sheet.');
         }
       },
       (error) => {
@@ -527,7 +394,7 @@ export default function App() {
             {/* User Session Profile / Login */}
             {!authLoading && (
               <>
-                {user && !user.isAnonymous ? (
+                {user ? (
                   <div className="flex items-center gap-2">
                     {user.photoURL ? (
                       <img 
@@ -551,7 +418,7 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  !needsAuth && role !== 'employee' && (
+                  !needsAuth && (
                     <div className="text-xs text-slate-400 animate-pulse">{t.loadingAuth}</div>
                   )
                 )}
@@ -567,7 +434,7 @@ export default function App() {
           <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mb-4" />
           <p className="text-sm font-medium text-slate-500">{t.loadingAuth}</p>
         </div>
-      ) : (needsAuth && role !== 'employee') ? (
+      ) : needsAuth ? (
         <main className="flex-1 max-w-4xl mx-auto px-4 py-12 flex flex-col items-center justify-center text-center">
           <motion.div
             initial={{ opacity: 0, y: 15 }}
@@ -614,39 +481,37 @@ export default function App() {
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
           
           {/* Welcome User bar */}
-          {role !== 'employee' && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold">
-                  👋
-                </div>
-                <div>
-                  <h3 className="font-semibold text-slate-900 text-sm sm:text-base">
-                    {t.welcome}, {user?.displayName || user?.email}!
-                  </h3>
-                  <p className="text-xs text-slate-500 flex items-center gap-1">
-                    <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    Connected to Google Account ({user?.email})
-                  </p>
-                </div>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold">
+                👋
               </div>
-
-              {/* Spreadsheet Switcher Trigger */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                    showSettings 
-                      ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
-                  <span>{t.settings}</span>
-                </button>
+              <div>
+                <h3 className="font-semibold text-slate-900 text-sm sm:text-base">
+                  {t.welcome}, {user?.displayName || user?.email}!
+                </h3>
+                <p className="text-xs text-slate-500 flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                  Connected to Google Account ({user?.email})
+                </p>
               </div>
             </div>
-          )}
+
+            {/* Spreadsheet Switcher Trigger */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                  showSettings 
+                    ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
+                <span>{t.settings}</span>
+              </button>
+            </div>
+          </div>
 
           {/* Collapsible Spreadsheet Configuration card */}
           <AnimatePresence>
@@ -825,21 +690,6 @@ export default function App() {
                       sharingStatus === 'saving' ? 'animate-pulse' : ''
                     }`} />
                   </div>
-                </div>
-
-                {/* Employee Name Input Field */}
-                <div className="w-full text-left mb-6">
-                  <label className="block text-xs font-bold text-slate-500 mb-2 uppercase tracking-wider">
-                    {t.employeeNameLabel}
-                  </label>
-                  <input
-                    type="text"
-                    value={employeeName}
-                    onChange={(e) => setEmployeeName(e.target.value)}
-                    placeholder={t.employeeNamePlaceholder}
-                    disabled={sharingStatus === 'detecting' || sharingStatus === 'saving'}
-                    className="w-full bg-slate-50 border border-slate-200 focus:bg-white focus:border-emerald-500 rounded-xl px-4 py-3.5 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:ring-4 focus:ring-emerald-500/10 transition-all font-semibold"
-                  />
                 </div>
 
                 <h3 className="font-bold text-slate-900 text-base mb-1">
@@ -1104,22 +954,15 @@ export default function App() {
                                   <MapPin className="w-3.5 h-3.5" />
                                 </div>
                                 <div className="min-w-0">
-                                  <span className="block text-xs font-semibold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                                  <span className="block text-xs font-semibold text-slate-800 flex items-center gap-1.5">
                                     {isLatest && (
                                       <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold px-1 rounded uppercase">
                                         {t.latestLocation}
                                       </span>
                                     )}
-                                    {record.name && (
-                                      <span className="text-[10px] bg-indigo-50 text-indigo-700 border border-indigo-100 font-bold px-1.5 py-0.5 rounded">
-                                        👤 {record.name}
-                                      </span>
-                                    )}
-                                    <span className="font-mono text-slate-600">
-                                      {record.lat.toFixed(5)}, {record.lon.toFixed(5)}
-                                    </span>
+                                    {record.lat.toFixed(5)}, {record.lon.toFixed(5)}
                                   </span>
-                                  <span className="block text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                  <span className="block text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
                                     <Clock className="w-2.5 h-2.5" />
                                     {record.timestamp}
                                   </span>
@@ -1147,13 +990,8 @@ export default function App() {
                         <div>
                           <h4 className="font-bold text-slate-900 text-sm">{t.mapCardTitle}</h4>
                           {selectedLocation && (
-                            <p className="text-[10px] text-slate-500 mt-0.5 font-medium flex items-center gap-1.5 flex-wrap">
+                            <p className="text-[10px] text-slate-500 mt-0.5 font-medium flex items-center gap-1">
                               <Compass className="w-3 h-3 text-emerald-500" />
-                              {selectedLocation.name && (
-                                <span className="text-[9px] bg-indigo-50 text-indigo-700 font-bold px-1.5 py-0.5 rounded">
-                                  👤 {selectedLocation.name}
-                                </span>
-                              )}
                               <span>{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(5)} ({selectedLocation.timestamp})</span>
                             </p>
                           )}
@@ -1187,7 +1025,7 @@ export default function App() {
                         useFallbackMap ? (
                           <iframe
                             title="Fallback Map Location"
-                            src={`https://maps.google.com/maps?q=${selectedLocation.lat},${selectedLocation.lon}(${encodeURIComponent(selectedLocation.name || 'Admin')})&hl=am&z=15&output=embed`}
+                            src={`https://maps.google.com/maps?q=${selectedLocation.lat},${selectedLocation.lon}&hl=am&z=15&output=embed`}
                             className="w-full h-full border-0 absolute inset-0"
                             allowFullScreen
                             loading="lazy"
@@ -1204,10 +1042,7 @@ export default function App() {
                               internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
                               style={{ width: '100%', height: '100%' }}
                             >
-                              <AdvancedMarker 
-                                position={{ lat: selectedLocation.lat, lng: selectedLocation.lon }}
-                                title={selectedLocation.name || 'Admin'}
-                              >
+                              <AdvancedMarker position={{ lat: selectedLocation.lat, lng: selectedLocation.lon }}>
                                 <Pin background="#10b981" glyphColor="#ffffff" borderColor="#047857" />
                               </AdvancedMarker>
                               {records.map((r, idx) => {

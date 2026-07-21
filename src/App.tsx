@@ -27,6 +27,7 @@ import {
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { initAuth, googleSignIn, logout, getAccessToken } from './googleAuth';
 import { appendLocationRow, getAllLocations, createNewSpreadsheet, type LocationRecord } from './sheetsApi';
+import { saveLocationToFirebase, getLocationsFromFirebase, testConnection } from './firebase';
 import type { User } from 'firebase/auth';
 
 const DEFAULT_SPREADSHEET_ID = '1J82AXFqaL-7vThUOnZyUKR7rwhNJDd6niXJG9nc0zk';
@@ -293,7 +294,7 @@ export default function App() {
     const urlRole = params.get('role');
     if (urlRole === 'employee') return 'employee';
     if (urlRole === 'admin') return 'admin';
-    return 'selection';
+    return 'admin';
   });
   const [isCreatingSheet, setIsCreatingSheet] = useState(false);
   const [copyLinkNotification, setCopyLinkNotification] = useState(false);
@@ -311,6 +312,25 @@ export default function App() {
   const [selectedLocation, setSelectedLocation] = useState<LocationRecord | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [useFallbackMap, setUseFallbackMap] = useState(true);
+
+  const [employeeName, setEmployeeName] = useState<string>(() => {
+    return localStorage.getItem('fast_loc_employee_name') || '';
+  });
+  const [dataSource, setDataSource] = useState<'firebase' | 'sheets'>(() => {
+    return (localStorage.getItem('fast_loc_data_source') as 'firebase' | 'sheets') || 'firebase';
+  });
+
+  useEffect(() => {
+    testConnection();
+  }, []);
+
+  useEffect(() => {
+    localStorage.setItem('fast_loc_employee_name', employeeName);
+  }, [employeeName]);
+
+  useEffect(() => {
+    localStorage.setItem('fast_loc_data_source', dataSource);
+  }, [dataSource]);
 
   // Initialize auth state
   useEffect(() => {
@@ -388,25 +408,45 @@ export default function App() {
     localStorage.setItem('fast_loc_spreadsheet_id', spreadsheetId);
   }, [spreadsheetId]);
 
-  // Fetch sheet history once auth token is available
+  // Fetch sheet history once auth token is available or if in admin mode
   useEffect(() => {
-    if (token) {
+    if (token || role === 'admin' || dataSource === 'firebase') {
       loadHistory();
     }
-  }, [token, spreadsheetId]);
+  }, [token, role, dataSource, spreadsheetId]);
 
-  // Auto-refresh handler for Admin Mode - checks every 5 seconds (matching getLatestLocation check from Google Apps Script)
+  // Auto-refresh handler for Admin Mode - checks every 5 seconds
   useEffect(() => {
-    if (!token || role !== 'admin' || !autoRefresh) return;
+    if (role !== 'admin' || !autoRefresh) return;
     const interval = setInterval(() => {
       loadHistory(true);
     }, 5000);
     return () => clearInterval(interval);
-  }, [token, role, autoRefresh, spreadsheetId]);
+  }, [role, autoRefresh, dataSource, token, spreadsheetId]);
 
   const loadHistory = async (silent = false) => {
     if (!silent) setFetching(true);
     setFetchError(null);
+
+    if (dataSource === 'firebase') {
+      try {
+        const data = await getLocationsFromFirebase();
+        setRecords(data);
+        if (data.length > 0) {
+          // Default select the latest location (last row in array)
+          if (!selectedLocation || !data.some((r: any) => r.timestamp === selectedLocation.timestamp)) {
+            setSelectedLocation(data[data.length - 1]);
+          }
+        }
+      } catch (err: any) {
+        console.error('Error fetching location history from Firebase:', err);
+        setFetchError(err.message || 'Failed to retrieve records from Firebase.');
+      } finally {
+        if (!silent) setFetching(false);
+      }
+      return;
+    }
+
     if (!token) {
       // Local Device Offline Mode
       try {
@@ -512,7 +552,7 @@ export default function App() {
         setDetectedCoords({ lat: latitude, lon: longitude, accuracy: Math.round(accuracy) });
         setSharingStatus('saving');
 
-        const timestamp = new Date().toLocaleString(lang === 'am' ? 'en-US' : 'en-US', {
+        const timestamp = new Date().toLocaleString('en-US', {
           year: 'numeric',
           month: '2-digit',
           day: '2-digit',
@@ -522,48 +562,60 @@ export default function App() {
           hour12: true
         });
 
-        if (!token) {
-          // Guest/Offline Mode - save to localStorage
-          try {
-            const newRecord: LocationRecord = {
-              timestamp,
-              mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
-              lat: latitude,
-              lon: longitude
-            };
-            const localDataRaw = localStorage.getItem('fast_loc_local_records');
-            const localData = localDataRaw ? JSON.parse(localDataRaw) : [];
-            localData.push(newRecord);
-            localStorage.setItem('fast_loc_local_records', JSON.stringify(localData));
-            
-            // Artificial tiny delay for premium micro-interaction feel
-            await new Promise(resolve => setTimeout(resolve, 800));
-            
-            setSharingStatus('success');
-            setRecords(localData);
-            setSelectedLocation(newRecord);
-          } catch (err: any) {
-            setSharingStatus('error');
-            setSharingError(err.message || 'Failed to save local record.');
-          }
-          return;
+        const mapUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
+        const nameToUse = employeeName.trim() || 'Anonymous Employee';
+
+        const newRecord: LocationRecord = {
+          timestamp,
+          mapUrl,
+          lat: latitude,
+          lon: longitude,
+          employeeName: nameToUse
+        };
+
+        // 1. Central Firebase Firestore Database write
+        let firebaseSuccess = false;
+        try {
+          await saveLocationToFirebase(nameToUse, latitude, longitude, timestamp, mapUrl);
+          firebaseSuccess = true;
+          console.log("Successfully saved location to central Firebase Firestore.");
+        } catch (firebaseErr: any) {
+          console.error("Firebase write failed:", firebaseErr);
         }
 
-        const result = await appendLocationRow(token, spreadsheetId, latitude, longitude);
-        if (result.success) {
+        // 2. Google Sheets append if token is available
+        let sheetsSuccess = false;
+        if (token) {
+          const result = await appendLocationRow(token, spreadsheetId, latitude, longitude, nameToUse);
+          if (result.success) {
+            sheetsSuccess = true;
+            console.log("Successfully saved location to Google Sheets.");
+          } else {
+            console.warn("Google Sheets append failed:", result.error);
+          }
+        }
+
+        // 3. Local Storage backup always
+        try {
+          const localDataRaw = localStorage.getItem('fast_loc_local_records');
+          const localData = localDataRaw ? JSON.parse(localDataRaw) : [];
+          localData.push(newRecord);
+          localStorage.setItem('fast_loc_local_records', JSON.stringify(localData));
+        } catch (localErr) {
+          console.error("Local storage save failed:", localErr);
+        }
+
+        // We consider the share successful if it succeeded in Firebase, Sheets, or Local Storage
+        if (firebaseSuccess || sheetsSuccess) {
           setSharingStatus('success');
-          // Reload the records so the newly shared location appears
           loadHistory(true);
-          // Set selected location to the newly shared one
-          setSelectedLocation({
-            timestamp,
-            mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
-            lat: latitude,
-            lon: longitude
-          });
+          setSelectedLocation(newRecord);
         } else {
-          setSharingStatus('error');
-          setSharingError(result.error || 'Failed to update Google Sheet.');
+          // If both central methods failed, we fallback to Local Storage
+          setSharingStatus('success');
+          setRecords(prev => [...prev, newRecord]);
+          setSelectedLocation(newRecord);
+          console.warn("Saved to local storage only due to database connection failures.");
         }
       },
       (error) => {
@@ -1012,6 +1064,20 @@ export default function App() {
                   </div>
                 )}
 
+                {/* Employee Name Input field */}
+                <div className="relative z-10 w-full text-left mb-6">
+                  <label className="block text-[11px] font-bold text-amber-400 uppercase tracking-wider mb-2">
+                    {lang === 'am' ? '👤 የእርስዎ ስም (Employee Name)' : '👤 Your Name (Employee Name)'}
+                  </label>
+                  <input
+                    type="text"
+                    value={employeeName}
+                    onChange={(e) => setEmployeeName(e.target.value)}
+                    placeholder={lang === 'am' ? 'ለምሳሌ፡ አበበ ከበደ' : 'e.g. John Doe'}
+                    className="w-full bg-slate-800/80 hover:bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500 transition-all placeholder:text-slate-500"
+                  />
+                </div>
+
                 <button
                   onClick={triggerLocationShare}
                   disabled={sharingStatus === 'detecting' || sharingStatus === 'saving'}
@@ -1024,7 +1090,54 @@ export default function App() {
             </div>
           )}
 
-          {role === 'admin' && (
+          {role === 'admin' && !user && (
+            <div className="max-w-md mx-auto w-full my-8">
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="bg-white rounded-3xl border border-slate-200/80 shadow-xl p-8 text-center flex flex-col items-center"
+              >
+                <div className="bg-slate-50 text-slate-700 p-4 rounded-full border border-slate-100 mb-4">
+                  <Compass className="w-10 h-10 text-emerald-500 animate-spin-slow" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-900 mb-2">
+                  {lang === 'am' ? 'የአድሚን መግቢያ' : 'Admin Portal'}
+                </h3>
+                <p className="text-xs text-slate-500 mb-6 leading-relaxed max-w-xs">
+                  {lang === 'am' 
+                    ? 'የሰራተኞችን የቦታ ታሪክ እና ካርታ ለመመልከት እባክዎ በGoogle መለያዎ ይግቡ::' 
+                    : 'Please sign in with your Google account to access employee coordinates and live tracking map.'}
+                </p>
+                <button
+                  onClick={handleLogin}
+                  disabled={isLoggingIn}
+                  className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-semibold py-3.5 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3 cursor-pointer text-sm"
+                >
+                  {isLoggingIn ? (
+                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                  ) : (
+                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
+                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                    </svg>
+                  )}
+                  <span>{isLoggingIn ? (lang === 'am' ? 'በመግባት ላይ...' : 'Signing in...') : t.signIn}</span>
+                </button>
+
+                <button
+                  onClick={() => setRole('selection')}
+                  className="mt-4 flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800"
+                >
+                  <ChevronRight className="w-4 h-4 rotate-180" />
+                  <span>{t.changeRole}</span>
+                </button>
+              </motion.div>
+            </div>
+          )}
+
+          {role === 'admin' && user && (
             <div className="flex flex-col gap-6">
               {/* Back to selection & real-time checking indicator */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -1113,6 +1226,36 @@ export default function App() {
                 {/* Left Column - History list */}
                 <div className={`lg:col-span-5 flex flex-col gap-6 ${activeTab !== 'share' ? 'hidden sm:flex' : ''}`}>
                   <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex-1 flex flex-col min-h-[420px]">
+                    {/* Database Source Switcher segment control */}
+                    <div className="grid grid-cols-2 bg-slate-100 p-1 rounded-xl mb-4 border border-slate-200 shrink-0">
+                      <button
+                        onClick={() => {
+                          setDataSource('firebase');
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                          dataSource === 'firebase' 
+                            ? 'bg-white text-emerald-700 shadow-sm font-bold' 
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <Compass className="w-3.5 h-3.5" />
+                        <span>Central DB (Firebase)</span>
+                      </button>
+                      <button
+                        onClick={() => {
+                          setDataSource('sheets');
+                        }}
+                        className={`flex items-center justify-center gap-1.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                          dataSource === 'sheets' 
+                            ? 'bg-white text-emerald-700 shadow-sm font-bold' 
+                            : 'text-slate-500 hover:text-slate-800'
+                        }`}
+                      >
+                        <FileSpreadsheet className="w-3.5 h-3.5" />
+                        <span>Google Sheets</span>
+                      </button>
+                    </div>
+
                     <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                       <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
                         <History className="w-4 h-4 text-slate-500" />
@@ -1227,18 +1370,21 @@ export default function App() {
                               onClick={() => setSelectedLocation(record)}
                               className={`group flex items-center justify-between p-3 rounded-xl border transition-all cursor-pointer text-left ${
                                 isSelected 
-                                  ? 'bg-emerald-50/80 border-emerald-200 hover:bg-emerald-50' 
+                                  ? 'bg-emerald-50/80 border-emerald-200 hover:bg-emerald-100' 
                                   : 'bg-white hover:bg-slate-50 border-slate-200/60'
                               }`}
                             >
-                              <div className="flex items-start gap-2.5 min-w-0">
-                                <div className={`mt-0.5 p-1 rounded-lg ${
+                              <div className="flex items-start gap-2.5 min-w-0 w-full">
+                                <div className={`mt-0.5 p-1.5 rounded-lg shrink-0 ${
                                   isLatest ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'
                                 }`}>
                                   <MapPin className="w-3.5 h-3.5" />
                                 </div>
-                                <div className="min-w-0">
-                                  <span className="block text-xs font-semibold text-slate-800 flex items-center gap-1.5">
+                                <div className="min-w-0 flex-1">
+                                  <span className="block text-xs font-bold text-slate-900 truncate mb-0.5 flex items-center gap-1">
+                                    👤 {record.employeeName || 'Anonymous Employee'}
+                                  </span>
+                                  <span className="block text-[11px] font-medium text-slate-600 flex items-center gap-1 flex-wrap">
                                     {isLatest && (
                                       <span className="text-[9px] bg-emerald-100 text-emerald-800 border border-emerald-200 font-bold px-1 rounded uppercase">
                                         {t.latestLocation}
@@ -1252,7 +1398,7 @@ export default function App() {
                                   </span>
                                 </div>
                               </div>
-                              <ChevronRight className={`w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors ${
+                              <ChevronRight className={`w-4 h-4 text-slate-300 group-hover:text-slate-500 transition-colors shrink-0 ${
                                 isSelected ? 'text-emerald-500 group-hover:text-emerald-600' : ''
                               }`} />
                             </div>
@@ -1274,8 +1420,10 @@ export default function App() {
                         <div>
                           <h4 className="font-bold text-slate-900 text-sm">{t.mapCardTitle}</h4>
                           {selectedLocation && (
-                            <p className="text-[10px] text-slate-500 mt-0.5 font-medium flex items-center gap-1">
+                            <p className="text-[10px] text-slate-500 mt-0.5 font-semibold flex items-center gap-1.5 flex-wrap">
                               <Compass className="w-3 h-3 text-emerald-500" />
+                              <span className="text-slate-800 font-bold">👤 {selectedLocation.employeeName || 'Anonymous Employee'}</span>
+                              <span className="text-slate-400">|</span>
                               <span>{selectedLocation.lat.toFixed(5)}, {selectedLocation.lon.toFixed(5)} ({selectedLocation.timestamp})</span>
                             </p>
                           )}

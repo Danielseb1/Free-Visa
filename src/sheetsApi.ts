@@ -3,6 +3,7 @@ export interface LocationRecord {
   mapUrl: string;
   lat: number;
   lon: number;
+  employeeName?: string;
 }
 
 // Fetch the name of the first sheet to ensure we use the correct range
@@ -33,13 +34,14 @@ export async function appendLocationRow(
   accessToken: string,
   spreadsheetId: string,
   lat: number,
-  lon: number
+  lon: number,
+  employeeName?: string
 ): Promise<{ success: boolean; error?: string }> {
   try {
     const sheetName = await getFirstSheetName(accessToken, spreadsheetId);
     const mapUrl = `https://www.google.com/maps?q=${lat},${lon}`;
     
-    // We append to column A to D: Timestamp, Map URL, Latitude, Longitude
+    // We append to column A to E: Timestamp, Employee Name, Map URL, Latitude, Longitude
     // Use Amharic/English formatted date string
     const timestamp = new Date().toLocaleString('en-US', {
       year: 'numeric',
@@ -51,11 +53,11 @@ export async function appendLocationRow(
       hour12: true
     });
 
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:D:append?valueInputOption=USER_ENTERED`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:E:append?valueInputOption=USER_ENTERED`;
     
     const body = {
       values: [
-        [timestamp, mapUrl, lat, lon]
+        [timestamp, employeeName || 'Anonymous Employee', mapUrl, lat, lon]
       ]
     };
 
@@ -87,7 +89,7 @@ export async function getAllLocations(
 ): Promise<LocationRecord[]> {
   try {
     const sheetName = await getFirstSheetName(accessToken, spreadsheetId);
-    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:D`;
+    const url = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/${encodeURIComponent(sheetName)}!A:E`;
     
     const response = await fetch(url, {
       headers: {
@@ -114,13 +116,27 @@ export async function getAllLocations(
 
     for (let i = startIdx; i < rows.length; i++) {
       const row = rows[i];
-      const timestamp = row[0] || 'N/A';
-      const mapUrl = row[1] || '';
-      const lat = parseFloat(row[2]);
-      const lon = parseFloat(row[3]);
+      if (row.length >= 5) {
+        // New schema: A: Timestamp, B: Employee Name, C: Map URL, D: Latitude, E: Longitude
+        const timestamp = row[0] || 'N/A';
+        const employeeName = row[1] || 'Anonymous Employee';
+        const mapUrl = row[2] || '';
+        const lat = parseFloat(row[3]);
+        const lon = parseFloat(row[4]);
 
-      if (!isNaN(lat) && !isNaN(lon)) {
-        records.push({ timestamp, mapUrl, lat, lon });
+        if (!isNaN(lat) && !isNaN(lon)) {
+          records.push({ timestamp, employeeName, mapUrl, lat, lon });
+        }
+      } else {
+        // Old schema: A: Timestamp, B: Map URL, C: Latitude, D: Longitude
+        const timestamp = row[0] || 'N/A';
+        const mapUrl = row[1] || '';
+        const lat = parseFloat(row[2]);
+        const lon = parseFloat(row[3]);
+
+        if (!isNaN(lat) && !isNaN(lon)) {
+          records.push({ timestamp, employeeName: 'Anonymous Employee', mapUrl, lat, lon });
+        }
       }
     }
 
@@ -135,7 +151,8 @@ export async function getAllLocations(
 function isHeader(row: any[]): boolean {
   if (!row || row.length === 0) return false;
   const firstCol = String(row[0]).toLowerCase();
-  return firstCol.includes('date') || firstCol.includes('time') || firstCol.includes('ቀን') || isNaN(parseFloat(row[2]));
+  const thirdColVal = row.length >= 5 ? parseFloat(row[3]) : parseFloat(row[2]);
+  return firstCol.includes('date') || firstCol.includes('time') || firstCol.includes('ቀን') || isNaN(thirdColVal);
 }
 
 // Create a new spreadsheet with the given title and pre-populate with headers
@@ -170,10 +187,10 @@ export async function createNewSpreadsheet(accessToken: string, title: string): 
   const spreadsheetId = data.spreadsheetId;
 
   // Now, write headers to this new spreadsheet
-  const headersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Locations!A1:D1?valueInputOption=USER_ENTERED`;
+  const headersUrl = `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Locations!A1:E1?valueInputOption=USER_ENTERED`;
   const headersBody = {
     values: [
-      ['Timestamp', 'Map URL', 'Latitude', 'Longitude']
+      ['Timestamp', 'Employee Name', 'Map URL', 'Latitude', 'Longitude']
     ]
   };
 

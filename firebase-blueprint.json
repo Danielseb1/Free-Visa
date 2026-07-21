@@ -1,0 +1,38 @@
+{
+  "entities": {
+    "Location": {
+      "title": "Location",
+      "description": "A record of an employee location pin",
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "description": "When the location was captured"
+        },
+        "mapUrl": {
+          "type": "string",
+          "description": "Google Maps link for the location"
+        },
+        "lat": {
+          "type": "number",
+          "description": "Latitude coordinate"
+        },
+        "lon": {
+          "type": "number",
+          "description": "Longitude coordinate"
+        },
+        "employeeName": {
+          "type": "string",
+          "description": "Name of the employee who shared their location"
+        }
+      },
+      "required": ["timestamp", "mapUrl", "lat", "lon"]
+    }
+  },
+  "firestore": {
+    "locations": {
+      "schema": "Location",
+      "description": "Global list of all employee shared locations"
+    }
+  }
+}

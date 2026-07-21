@@ -1,13 +1,16 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
+import { defineConfig } from 'vite';
 
 export default defineConfig(() => {
   return {
+    base: '/Free-Visa/',  // <-- ይህንን መስመር ብቻ ነው እዚህ ቦታ ላይ መጨመር ያለብዎት
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
+        // (ሌሎች ከስር ያሉ ኮዶች እንዳሉ ይቀጥላሉ...)
+
         '@': path.resolve(__dirname, '.'),
       },
     },

@@ -18,7 +18,11 @@ import {
   HelpCircle,
   Clock,
   Share2,
-  Copy
+  Copy,
+  Trophy,
+  Award,
+  Sparkles,
+  Gift
 } from 'lucide-react';
 import { APIProvider, Map, AdvancedMarker, Pin } from '@vis.gl/react-google-maps';
 import { initAuth, googleSignIn, logout, getAccessToken } from './googleAuth';
@@ -148,25 +152,149 @@ const API_KEY =
   '';
 const hasValidKey = Boolean(API_KEY) && API_KEY !== 'YOUR_API_KEY';
 
+interface Particle {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  alpha: number;
+  color: string;
+  size: number;
+  gravity: number;
+  fade: number;
+}
+
+function Fireworks() {
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    let animationFrameId: number;
+    let particles: Particle[] = [];
+
+    const resizeCanvas = () => {
+      if (canvas) {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+      }
+    };
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    const colors = ['#FFD700', '#FF4500', '#FF1493', '#00FF7F', '#1E90FF', '#ADFF2F', '#FF8C00', '#F0E68C'];
+
+    const createFirework = (x: number, y: number) => {
+      const count = 50 + Math.floor(Math.random() * 30);
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 1.5 + Math.random() * 4.5;
+        particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - (1 + Math.random() * 1.5),
+          alpha: 1,
+          color,
+          size: 1.2 + Math.random() * 1.8,
+          gravity: 0.04,
+          fade: 0.008 + Math.random() * 0.012,
+        });
+      }
+    };
+
+    let lastBurst = 0;
+    const tick = (now: number) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      if (now - lastBurst > 700) {
+        const rx = canvas.width * 0.15 + Math.random() * (canvas.width * 0.7);
+        const ry = canvas.height * 0.2 + Math.random() * (canvas.height * 0.35);
+        createFirework(rx, ry);
+        lastBurst = now;
+      }
+
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += p.gravity;
+        p.alpha -= p.fade;
+
+        if (p.alpha <= 0) {
+          particles.splice(i, 1);
+        } else {
+          ctx.save();
+          ctx.globalAlpha = p.alpha;
+          ctx.fillStyle = p.color;
+          ctx.shadowBlur = 5;
+          ctx.shadowColor = p.color;
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      animationFrameId = requestAnimationFrame(tick);
+    };
+
+    animationFrameId = requestAnimationFrame(tick);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      window.removeEventListener('resize', resizeCanvas);
+    };
+  }, []);
+
+  return (
+    <canvas 
+      ref={canvasRef} 
+      className="fixed inset-0 pointer-events-none z-50 w-screen h-screen"
+    />
+  );
+}
+
 export default function App() {
   const [lang, setLang] = useState<'am' | 'en'>('am');
   const t = TRANSLATIONS[lang];
 
   // Auth State
   const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [needsAuth, setNeedsAuth] = useState(true);
+  const [token, setToken] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlRole = params.get('role');
+    const urlToken = params.get('token');
+    return urlRole === 'employee' && urlToken ? urlToken : null;
+  });
+  const [needsAuth, setNeedsAuth] = useState(false);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
   // App Settings & App State
   const [spreadsheetId, setSpreadsheetId] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlRole = params.get('role');
+    const urlSheetId = params.get('sheetId');
+    if (urlRole === 'employee' && urlSheetId) {
+      return urlSheetId;
+    }
     return localStorage.getItem('fast_loc_spreadsheet_id') || DEFAULT_SPREADSHEET_ID;
   });
   const [activeTab, setActiveTab] = useState<'share' | 'viewer'>('share');
   const [showSettings, setShowSettings] = useState(false);
   const [copyNotification, setCopyNotification] = useState(false);
-  const [role, setRole] = useState<'selection' | 'employee' | 'admin'>('selection');
+  const [role, setRole] = useState<'selection' | 'employee' | 'admin'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const urlRole = params.get('role');
+    if (urlRole === 'employee') return 'employee';
+    if (urlRole === 'admin') return 'admin';
+    return 'selection';
+  });
   const [isCreatingSheet, setIsCreatingSheet] = useState(false);
   const [copyLinkNotification, setCopyLinkNotification] = useState(false);
   const [hasAutoTriggered, setHasAutoTriggered] = useState(false);
@@ -189,34 +317,67 @@ export default function App() {
     const unsubscribe = initAuth(
       (currentUser, accessToken) => {
         setUser(currentUser);
-        setToken(accessToken);
+        // Prioritize URL token in employee mode to prevent overwriting with active browser user sessions
+        const params = new URLSearchParams(window.location.search);
+        const urlRole = params.get('role');
+        const urlToken = params.get('token');
+        if (urlRole === 'employee' && urlToken) {
+          setToken(urlToken);
+        } else {
+          setToken(accessToken);
+        }
         setNeedsAuth(false);
         setAuthLoading(false);
       },
       () => {
         setUser(null);
-        setToken(null);
-        setNeedsAuth(true);
+        // Keep the URL token in employee mode to avoid clearing it when there is no active Google login
+        const params = new URLSearchParams(window.location.search);
+        const urlRole = params.get('role');
+        const urlToken = params.get('token');
+        if (urlRole === 'employee' && urlToken) {
+          setToken(urlToken);
+        } else {
+          setToken(null);
+        }
+        setNeedsAuth(false);
         setAuthLoading(false);
       }
     );
     return () => unsubscribe();
   }, []);
 
-  // Handle URL parameters for automatic role selection
+  // Handle URL parameters for automatic role selection and seamless authorization
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const urlRole = params.get('role');
+    const urlToken = params.get('token');
+    const urlSheetId = params.get('sheetId');
+
     if (urlRole === 'employee') {
       setRole('employee');
+      if (urlToken) {
+        setToken(urlToken);
+      }
+      if (urlSheetId) {
+        setSpreadsheetId(urlSheetId);
+      }
     } else if (urlRole === 'admin') {
       setRole('admin');
     }
   }, []);
 
-  // Automatic sharing trigger when authenticated in employee mode
+  // Automatic sharing trigger when in employee mode
   useEffect(() => {
-    if (token && role === 'employee' && !hasAutoTriggered && sharingStatus === 'idle') {
+    const params = new URLSearchParams(window.location.search);
+    const urlToken = params.get('token');
+    
+    // Wait for the URL token to be set to state before auto-triggering
+    if (urlToken && !token) {
+      return;
+    }
+
+    if (role === 'employee' && !hasAutoTriggered && sharingStatus === 'idle') {
       setHasAutoTriggered(true);
       triggerLocationShare();
     }
@@ -244,9 +405,29 @@ export default function App() {
   }, [token, role, autoRefresh, spreadsheetId]);
 
   const loadHistory = async (silent = false) => {
-    if (!token) return;
     if (!silent) setFetching(true);
     setFetchError(null);
+    if (!token) {
+      // Local Device Offline Mode
+      try {
+        const localDataRaw = localStorage.getItem('fast_loc_local_records');
+        const localData = localDataRaw ? JSON.parse(localDataRaw) : [];
+        setRecords(localData);
+        if (localData.length > 0) {
+          // Default select the latest location (last row in local storage)
+          if (!selectedLocation || !localData.some((r: any) => r.timestamp === selectedLocation.timestamp)) {
+            setSelectedLocation(localData[localData.length - 1]);
+          }
+        }
+      } catch (err: any) {
+        console.error('Error loading local records:', err);
+      } finally {
+        if (!silent) setFetching(false);
+      }
+      return;
+    }
+
+    // Google Sheets Online Mode
     try {
       const data = await getAllLocations(token, spreadsheetId);
       setRecords(data);
@@ -299,13 +480,23 @@ export default function App() {
     await logout();
     setUser(null);
     setToken(null);
-    setNeedsAuth(true);
+    setNeedsAuth(false);
     setRecords([]);
     setSelectedLocation(null);
+    // Reload local history after logging out so the user sees their offline local records
+    try {
+      const localDataRaw = localStorage.getItem('fast_loc_local_records');
+      const localData = localDataRaw ? JSON.parse(localDataRaw) : [];
+      setRecords(localData);
+      if (localData.length > 0) {
+        setSelectedLocation(localData[localData.length - 1]);
+      }
+    } catch (err) {
+      console.error('Error reloading local records:', err);
+    }
   };
 
   const triggerLocationShare = () => {
-    if (!token) return;
     setSharingStatus('detecting');
     setSharingError(null);
 
@@ -321,6 +512,43 @@ export default function App() {
         setDetectedCoords({ lat: latitude, lon: longitude, accuracy: Math.round(accuracy) });
         setSharingStatus('saving');
 
+        const timestamp = new Date().toLocaleString(lang === 'am' ? 'en-US' : 'en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        });
+
+        if (!token) {
+          // Guest/Offline Mode - save to localStorage
+          try {
+            const newRecord: LocationRecord = {
+              timestamp,
+              mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
+              lat: latitude,
+              lon: longitude
+            };
+            const localDataRaw = localStorage.getItem('fast_loc_local_records');
+            const localData = localDataRaw ? JSON.parse(localDataRaw) : [];
+            localData.push(newRecord);
+            localStorage.setItem('fast_loc_local_records', JSON.stringify(localData));
+            
+            // Artificial tiny delay for premium micro-interaction feel
+            await new Promise(resolve => setTimeout(resolve, 800));
+            
+            setSharingStatus('success');
+            setRecords(localData);
+            setSelectedLocation(newRecord);
+          } catch (err: any) {
+            setSharingStatus('error');
+            setSharingError(err.message || 'Failed to save local record.');
+          }
+          return;
+        }
+
         const result = await appendLocationRow(token, spreadsheetId, latitude, longitude);
         if (result.success) {
           setSharingStatus('success');
@@ -328,7 +556,7 @@ export default function App() {
           loadHistory(true);
           // Set selected location to the newly shared one
           setSelectedLocation({
-            timestamp: new Date().toLocaleString(),
+            timestamp,
             mapUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
             lat: latitude,
             lon: longitude
@@ -392,7 +620,7 @@ export default function App() {
             </button>
 
             {/* User Session Profile / Login */}
-            {!authLoading && (
+            {role !== 'employee' && !authLoading && (
               <>
                 {user ? (
                   <div className="flex items-center gap-2">
@@ -418,9 +646,24 @@ export default function App() {
                     </button>
                   </div>
                 ) : (
-                  !needsAuth && (
-                    <div className="text-xs text-slate-400 animate-pulse">{t.loadingAuth}</div>
-                  )
+                  <button
+                    onClick={handleLogin}
+                    disabled={isLoggingIn}
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-sm transition-all focus:outline-none"
+                    title={t.signIn}
+                  >
+                    {isLoggingIn ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                    ) : (
+                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-3.5 h-3.5">
+                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
+                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
+                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
+                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
+                      </svg>
+                    )}
+                    <span>{t.signIn}</span>
+                  </button>
                 )}
               </>
             )}
@@ -428,94 +671,58 @@ export default function App() {
         </div>
       </header>
 
-      {/* Hero Welcome banner if not logged in */}
+      {/* Hero Welcome banner if loading */}
       {authLoading ? (
         <div className="flex-1 flex flex-col items-center justify-center py-20">
           <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mb-4" />
           <p className="text-sm font-medium text-slate-500">{t.loadingAuth}</p>
         </div>
-      ) : needsAuth ? (
-        <main className="flex-1 max-w-4xl mx-auto px-4 py-12 flex flex-col items-center justify-center text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 15 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5 }}
-            className="bg-white border border-slate-200/80 rounded-3xl p-8 sm:p-12 shadow-xl shadow-slate-100 max-w-md w-full"
-          >
-            <div className="mx-auto w-16 h-16 bg-emerald-50 text-emerald-600 rounded-2xl flex items-center justify-center mb-6">
-              <MapPin className="w-8 h-8" />
-            </div>
-            
-            <h2 className="text-2xl font-bold text-slate-900 mb-2 font-display">{t.title}</h2>
-            <p className="text-slate-500 text-sm mb-8 leading-relaxed">
-              {t.subtitle}
-            </p>
-
-            {/* Standard "Sign in with Google" button according to skill layout */}
-            <button
-              onClick={handleLogin}
-              disabled={isLoggingIn}
-              className="w-full flex items-center justify-center gap-3 bg-white hover:bg-slate-50 text-slate-700 font-semibold py-3 px-4 border border-slate-300 rounded-xl shadow-sm transition-all hover:border-slate-400 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500"
-            >
-              {isLoggingIn ? (
-                <RefreshCw className="w-5 h-5 animate-spin text-slate-500" />
-              ) : (
-                <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-5 h-5">
-                  <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                  <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                  <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                  <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                </svg>
-              )}
-              <span>{isLoggingIn ? t.loadingAuth : t.signIn}</span>
-            </button>
-
-            <div className="mt-8 pt-6 border-t border-slate-100 flex items-center justify-center gap-2 text-xs text-slate-400">
-              <FileSpreadsheet className="w-4 h-4 text-slate-300" />
-              <span>Saves securely to Google Sheets</span>
-            </div>
-          </motion.div>
-        </main>
       ) : (
         /* Authenticated Main App Workspace */
         <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
           
           {/* Welcome User bar */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold">
-                👋
+          {role !== 'employee' && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold">
+                  {user ? '👋' : '📱'}
+                </div>
+                <div>
+                  <h3 className="font-semibold text-slate-900 text-sm sm:text-base">
+                    {user ? `${t.welcome}, ${user.displayName || user.email}!` : (lang === 'am' ? 'ያለ መግቢያ (የስልክ መዝገብ)' : 'Guest Mode (Local Storage)')}
+                  </h3>
+                  <p className="text-xs text-slate-500 flex items-center gap-1">
+                    <span className={`inline-block w-2 h-2 rounded-full animate-pulse ${user ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                    {user 
+                      ? `Connected to Google Account (${user.email})` 
+                      : (lang === 'am' 
+                          ? 'መረጃዎ በስልክዎ/አሳሽዎ ላይ ብቻ ነው የሚቀመጠው::' 
+                          : 'Your records are stored locally on your browser/device only')}
+                  </p>
+                </div>
               </div>
-              <div>
-                <h3 className="font-semibold text-slate-900 text-sm sm:text-base">
-                  {t.welcome}, {user?.displayName || user?.email}!
-                </h3>
-                <p className="text-xs text-slate-500 flex items-center gap-1">
-                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Connected to Google Account ({user?.email})
-                </p>
-              </div>
-            </div>
 
-            {/* Spreadsheet Switcher Trigger */}
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowSettings(!showSettings)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                  showSettings 
-                    ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
-                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                }`}
-              >
-                <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
-                <span>{t.settings}</span>
-              </button>
+              {/* Spreadsheet Switcher Trigger */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
+                    showSettings 
+                      ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
+                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                  }`}
+                >
+                  <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
+                  <span>{t.settings}</span>
+                </button>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Collapsible Spreadsheet Configuration card */}
           <AnimatePresence>
-            {showSettings && (
+            {role !== 'employee' && showSettings && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: 'auto' }}
@@ -631,88 +838,145 @@ export default function App() {
           )}
 
           {role === 'employee' && (
-            <div className="max-w-md mx-auto w-full my-6 flex flex-col gap-4">
-              {/* Back to selection */}
-              <button
-                onClick={() => setRole('selection')}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 self-start"
-              >
-                <ChevronRight className="w-4 h-4 rotate-180" />
-                <span>{t.changeRole}</span>
-              </button>
+            <div className="max-w-md mx-auto w-full my-4 flex flex-col gap-6 relative">
+              {/* Optional Fireworks Canvas triggered on successful share */}
+              {sharingStatus === 'success' && <Fireworks />}
 
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xl p-6 flex flex-col items-center text-center relative overflow-hidden">
-                <div className="absolute top-4 left-4 bg-emerald-50 text-emerald-600 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider">
-                  {t.employeeViewTitle}
+              <motion.div
+                initial={{ opacity: 0, y: 15 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="relative overflow-hidden rounded-3xl bg-gradient-to-b from-slate-900 via-slate-800 to-slate-950 border border-amber-500/30 text-white shadow-2xl shadow-amber-500/5 p-6 flex flex-col items-center text-center"
+              >
+                {/* Visual background sparkles decor */}
+                <div className="absolute top-0 inset-x-0 h-40 bg-gradient-to-b from-amber-500/10 to-transparent pointer-events-none" />
+                <div className="absolute -top-10 -right-10 w-40 h-40 bg-emerald-500/10 rounded-full blur-3xl pointer-events-none" />
+                <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+
+                {/* Header Badge */}
+                <div className="relative z-10 bg-amber-500/20 border border-amber-500/30 text-amber-300 px-3.5 py-1 rounded-full text-[11px] font-bold uppercase tracking-wider flex items-center gap-1.5 mb-6">
+                  <Award className="w-3.5 h-3.5 animate-pulse" />
+                  <span>{lang === 'am' ? 'የሽልማት እና የተሳትፎ ገፅ' : 'Rewards & Mission Hub'}</span>
                 </div>
 
-                <h3 className="font-bold text-slate-900 text-lg mb-1 mt-6">
-                  {t.employeeViewTitle}
-                </h3>
-                <p className="text-xs text-slate-500 max-w-xs leading-relaxed mb-6">
-                  {t.employeeViewDesc}
-                </p>
-
-                {/* Pulsing Radar Rings under Locator Icon */}
-                <div className="relative w-28 h-28 my-4 flex items-center justify-center">
+                {/* Animated Central Icon Container */}
+                <div className="relative z-10 w-32 h-32 my-2 flex items-center justify-center">
                   <AnimatePresence>
                     {(sharingStatus === 'detecting' || sharingStatus === 'saving') && (
                       <>
                         <motion.div
                           key="ring-1"
-                          initial={{ scale: 0.8, opacity: 0.5 }}
-                          animate={{ scale: 2, opacity: 0 }}
+                          initial={{ scale: 0.8, opacity: 0.6 }}
+                          animate={{ scale: 1.8, opacity: 0 }}
                           exit={{ opacity: 0 }}
                           transition={{ repeat: Infinity, duration: 1.5, ease: 'easeOut' }}
-                          className="absolute inset-0 bg-emerald-500/20 rounded-full"
+                          className="absolute inset-0 bg-amber-500/30 rounded-full"
                         />
                         <motion.div
                           key="ring-2"
                           initial={{ scale: 0.8, opacity: 0.4 }}
-                          animate={{ scale: 1.6, opacity: 0 }}
+                          animate={{ scale: 1.4, opacity: 0 }}
                           exit={{ opacity: 0 }}
-                          transition={{ repeat: Infinity, duration: 1.5, delay: 0.5, ease: 'easeOut' }}
-                          className="absolute inset-0 bg-emerald-500/15 rounded-full"
+                          transition={{ repeat: Infinity, duration: 1.5, delay: 0.4, ease: 'easeOut' }}
+                          className="absolute inset-0 bg-emerald-500/25 rounded-full"
                         />
                       </>
                     )}
                   </AnimatePresence>
                   
-                  <div className={`relative z-10 w-20 h-20 rounded-full flex items-center justify-center transition-all ${
-                    sharingStatus === 'success' 
-                      ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/30' 
-                      : sharingStatus === 'error'
-                      ? 'bg-red-500 text-white shadow-lg shadow-red-500/30'
-                      : 'bg-emerald-50 text-emerald-600 border border-emerald-100'
-                  }`}>
-                    <MapPin className={`w-9 h-9 ${
-                      sharingStatus === 'detecting' ? 'animate-bounce' : 
-                      sharingStatus === 'saving' ? 'animate-pulse' : ''
-                    }`} />
+                  <motion.div 
+                    animate={sharingStatus === 'success' ? { scale: [1, 1.15, 1], rotate: [0, 10, -10, 0] } : {}}
+                    transition={{ duration: 0.8, ease: "easeInOut" }}
+                    className={`relative z-10 w-24 h-24 rounded-full flex items-center justify-center transition-all duration-500 ${
+                      sharingStatus === 'success' 
+                        ? 'bg-gradient-to-tr from-amber-400 to-yellow-300 text-slate-950 shadow-lg shadow-amber-500/30' 
+                        : sharingStatus === 'error'
+                        ? 'bg-gradient-to-tr from-red-600 to-rose-500 text-white shadow-lg shadow-red-500/30'
+                        : 'bg-slate-800/80 text-amber-400 border border-amber-500/20'
+                    }`}
+                  >
+                    {sharingStatus === 'success' ? (
+                      <Trophy className="w-11 h-11 animate-bounce" />
+                    ) : sharingStatus === 'error' ? (
+                      <AlertCircle className="w-11 h-11" />
+                    ) : (
+                      <Gift className="w-11 h-11 animate-pulse" />
+                    )}
+                  </motion.div>
+                </div>
+
+                <div className="relative z-10 mt-4 max-w-xs">
+                  <h3 className="font-bold text-white text-xl tracking-tight mb-2">
+                    {sharingStatus === 'idle' && (lang === 'am' ? 'የደስታ ነጥቦችን ያግኙ! 🏆' : 'Earn Joy Rewards! 🏆')}
+                    {sharingStatus === 'detecting' && (lang === 'am' ? 'ሎኬሽንዎን በመፈለግ ላይ... 🛰️' : 'Locating satellite... 🛰️')}
+                    {sharingStatus === 'saving' && (lang === 'am' ? 'የደስታ ነጥብዎን በመመዝገብ ላይ... 💎' : 'Recording joy points... 💎')}
+                    {sharingStatus === 'success' && (lang === 'am' ? 'እንኳን ደስ አለዎት! 🎆🏆' : 'Congratulations! 🎆🏆')}
+                    {sharingStatus === 'error' && (lang === 'am' ? 'ስህተት ገጥሟል' : 'Mission Failed')}
+                  </h3>
+                  
+                  <p className="text-xs text-slate-300 leading-relaxed mb-6">
+                    {sharingStatus === 'success' 
+                      ? (lang === 'am' ? 'እጅግ በጣም ድንቅ ነው! ሎኬሽንዎን እና የዛሬ ተልዕኮዎን በተሳካ ሁኔታ አጋርተዋል::' : 'Incredible! You have successfully shared your location and completed today\'s mission.')
+                      : (lang === 'am' ? 'ከታች ያለውን ቁልፍ አንዴ በመጫን ሎኬሽንዎን ያጋሩ እና +15 የደስታ ነጥቦችን በቅጽበት ያግኙ!' : 'Click the button below once to share your location and instantly receive +15 joy points!')}
+                  </p>
+                </div>
+
+                {/* Premium Gamified Reward Stats Widget */}
+                <div className="relative z-10 w-full bg-slate-800/50 border border-slate-700/60 rounded-2xl p-4 mb-6 text-left">
+                  <div className="flex justify-between items-center mb-3">
+                    <span className="text-xs font-semibold text-slate-400">
+                      {lang === 'am' ? 'የእርስዎ የደስታ ነጥቦች' : 'Your Joy Points'}
+                    </span>
+                    <motion.span 
+                      key={sharingStatus}
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: 1 }}
+                      className="text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-lg flex items-center gap-1"
+                    >
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      {sharingStatus === 'success' ? '165 ነጥቦች (+15 🌟)' : '150 ነጥቦች'}
+                    </motion.span>
+                  </div>
+
+                  {/* Level Progress Bar */}
+                  <div className="w-full bg-slate-700/50 h-2.5 rounded-full overflow-hidden mb-4 relative">
+                    <motion.div
+                      initial={{ width: '75%' }}
+                      animate={{ width: sharingStatus === 'success' ? '100%' : '75%' }}
+                      transition={{ duration: 1, ease: 'easeOut' }}
+                      className="bg-gradient-to-r from-amber-500 via-yellow-400 to-emerald-400 h-full rounded-full"
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 text-center pt-2 border-t border-slate-700/40">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        {lang === 'am' ? 'የደረጃ ባጅ' : 'Rank Badge'}
+                      </span>
+                      <span className="text-xs font-bold text-slate-200 flex items-center justify-center gap-1">
+                        🎖️ {lang === 'am' ? 'ጀግና አሳሽ' : 'Hero Explorer'}
+                      </span>
+                    </div>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">
+                        {lang === 'am' ? 'ተከታታይ ቀናት' : 'Daily Streak'}
+                      </span>
+                      <span className="text-xs font-bold text-slate-200 flex items-center justify-center gap-1">
+                        🔥 {lang === 'am' ? '5 ቀናት' : '5 Days'}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                <h3 className="font-bold text-slate-900 text-base mb-1">
-                  {sharingStatus === 'detecting' && t.detecting}
-                  {sharingStatus === 'saving' && t.saving}
-                  {sharingStatus === 'success' && t.shareSuccessHeading}
-                  {sharingStatus === 'error' && (lang === 'am' ? 'ስህተት ገጥሟል' : 'Sharing Failed')}
-                </h3>
-                
-                <p className="text-xs text-slate-500 max-w-xs leading-relaxed mb-6">
-                  {sharingStatus === 'success' ? t.successMsg : t.accuracyHint}
-                </p>
-
                 {sharingStatus === 'error' && (
-                  <div className="flex flex-col gap-3 w-full bg-red-50/70 border border-red-100 p-4 rounded-2xl mb-6">
-                    <p className="text-xs text-red-600 leading-relaxed font-semibold">
+                  <div className="relative z-10 flex flex-col gap-3 w-full bg-red-950/40 border border-red-500/20 p-4 rounded-2xl mb-6">
+                    <p className="text-xs text-red-300 leading-relaxed font-semibold text-left">
                       {t.errorMsg} {sharingError}
                     </p>
                     {String(sharingError).toLowerCase().includes('not found') && (
                       <button
                         onClick={handleCreateNewSpreadsheet}
                         disabled={isCreatingSheet}
-                        className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300 text-white font-bold py-2.5 px-3 rounded-xl shadow-sm text-xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:bg-emerald-800 text-white font-bold py-2.5 px-3 rounded-xl shadow-sm text-xs flex items-center justify-center gap-2 cursor-pointer transition-all border border-emerald-500/20"
                       >
                         {isCreatingSheet ? (
                           <>
@@ -730,20 +994,20 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Detected Coords panel */}
+                {/* Detected Coordinates panel if available */}
                 {detectedCoords && (
-                  <div className="w-full bg-slate-50 border border-slate-100 rounded-xl p-3 mb-6 grid grid-cols-3 gap-2 divide-x divide-slate-200/50 text-center">
+                  <div className="relative z-10 w-full bg-slate-800/30 border border-slate-700/40 rounded-xl p-3 mb-6 grid grid-cols-3 gap-2 divide-x divide-slate-700/50 text-center text-slate-300">
                     <div>
                       <span className="block text-[10px] text-slate-400 font-bold uppercase">{t.latLabel}</span>
-                      <span className="text-xs font-mono font-medium text-slate-700">{detectedCoords.lat.toFixed(6)}</span>
+                      <span className="text-xs font-mono font-medium">{detectedCoords.lat.toFixed(6)}</span>
                     </div>
                     <div>
                       <span className="block text-[10px] text-slate-400 font-bold uppercase">{t.lonLabel}</span>
-                      <span className="text-xs font-mono font-medium text-slate-700">{detectedCoords.lon.toFixed(6)}</span>
+                      <span className="text-xs font-mono font-medium">{detectedCoords.lon.toFixed(6)}</span>
                     </div>
                     <div>
                       <span className="block text-[10px] text-slate-400 font-bold uppercase">{t.accLabel}</span>
-                      <span className="text-xs font-medium text-emerald-600">{detectedCoords.accuracy}m</span>
+                      <span className="text-xs font-medium text-emerald-400">{detectedCoords.accuracy}m</span>
                     </div>
                   </div>
                 )}
@@ -751,12 +1015,12 @@ export default function App() {
                 <button
                   onClick={triggerLocationShare}
                   disabled={sharingStatus === 'detecting' || sharingStatus === 'saving'}
-                  className="w-full bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300 text-white font-semibold py-3.5 px-6 rounded-xl shadow-md shadow-emerald-500/10 hover:shadow-emerald-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer text-sm"
+                  className="relative z-10 w-full bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 disabled:from-slate-700 disabled:to-slate-800 disabled:text-slate-400 text-slate-950 font-bold py-4 px-6 rounded-2xl shadow-lg shadow-amber-500/10 hover:shadow-amber-500/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2.5 cursor-pointer text-sm"
                 >
-                  <Navigation className="w-4 h-4 text-white/90" />
+                  <Navigation className="w-4 h-4 text-slate-950 shrink-0" />
                   <span>{t.shareBtn}</span>
                 </button>
-              </div>
+              </motion.div>
             </div>
           )}
 
@@ -802,11 +1066,14 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 bg-white border border-emerald-200/60 p-1.5 rounded-xl self-stretch sm:self-center">
                   <span className="text-xs font-mono text-slate-600 truncate max-w-[180px] sm:max-w-[240px] px-2">
-                    {`${window.location.origin}${window.location.pathname}?role=employee`}
+                    {`${window.location.origin}${window.location.pathname}?role=employee${token ? '&token=authorized' : ''}`}
                   </span>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}${window.location.pathname}?role=employee`);
+                      const shareUrl = `${window.location.origin}${window.location.pathname}?role=employee` + 
+                        (token ? `&token=${encodeURIComponent(token)}` : '') + 
+                        (spreadsheetId ? `&sheetId=${encodeURIComponent(spreadsheetId)}` : '');
+                      navigator.clipboard.writeText(shareUrl);
                       setCopyLinkNotification(true);
                       setTimeout(() => setCopyLinkNotification(false), 2500);
                     }}
@@ -859,15 +1126,32 @@ export default function App() {
 
                       <div className="flex items-center gap-2">
                         {/* Auto-Refresh Toggle */}
-                        <label className="hidden sm:flex items-center gap-1.5 cursor-pointer">
-                          <input 
-                            type="checkbox"
-                            checked={autoRefresh}
-                            onChange={(e) => setAutoRefresh(e.target.checked)}
-                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
-                          />
-                          <span className="text-[10px] text-slate-500 font-medium">{t.autoRefresh}</span>
-                        </label>
+                        {token && (
+                          <label className="hidden sm:flex items-center gap-1.5 cursor-pointer">
+                            <input 
+                              type="checkbox"
+                              checked={autoRefresh}
+                              onChange={(e) => setAutoRefresh(e.target.checked)}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 w-3.5 h-3.5"
+                            />
+                            <span className="text-[10px] text-slate-500 font-medium">{t.autoRefresh}</span>
+                          </label>
+                        )}
+
+                        {!token && records.length > 0 && (
+                          <button
+                            onClick={() => {
+                              if (confirm(lang === 'am' ? 'እርግጠኛ ነዎት ሁሉንም የተመዘገቡ የቦታ መረጃዎችን ማጥፋት ይፈልጋሉ?' : 'Are you sure you want to clear all local records?')) {
+                                localStorage.removeItem('fast_loc_local_records');
+                                setRecords([]);
+                                setSelectedLocation(null);
+                              }
+                            }}
+                            className="px-2.5 py-1 text-[10px] font-semibold text-red-600 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition-colors cursor-pointer"
+                          >
+                            {lang === 'am' ? 'መዝገብ አጥፋ' : 'Clear Local'}
+                          </button>
+                        )}
 
                         <button
                           onClick={() => loadHistory()}

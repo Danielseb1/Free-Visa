@@ -389,19 +389,11 @@ export default function App() {
 
   // Automatic sharing trigger when in employee mode
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
-    
-    // Wait for the URL token to be set to state before auto-triggering
-    if (urlToken && !token) {
-      return;
-    }
-
     if (role === 'employee' && !hasAutoTriggered && sharingStatus === 'idle') {
       setHasAutoTriggered(true);
       triggerLocationShare();
     }
-  }, [token, role, hasAutoTriggered, sharingStatus]);
+  }, [role, hasAutoTriggered, sharingStatus]);
 
   // Sync spreadsheetId with localStorage
   useEffect(() => {
@@ -851,7 +843,11 @@ export default function App() {
                 </h3>
                 <div className="flex flex-col gap-4">
                   <button
-                    onClick={() => setRole('employee')}
+                    onClick={() => {
+                      setHasAutoTriggered(false);
+                      setSharingStatus('idle');
+                      setRole('employee');
+                    }}
                     className="group flex items-center justify-between p-5 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/60 rounded-2xl transition-all hover:scale-[1.01] hover:shadow-md cursor-pointer text-left"
                   >
                     <div className="flex items-center gap-4">
@@ -966,17 +962,17 @@ export default function App() {
 
                 <div className="relative z-10 mt-4 max-w-xs">
                   <h3 className="font-bold text-white text-xl tracking-tight mb-2">
-                    {sharingStatus === 'idle' && (lang === 'am' ? 'የደስታ ነጥቦችን ያግኙ! 🏆' : 'Earn Joy Rewards! 🏆')}
-                    {sharingStatus === 'detecting' && (lang === 'am' ? 'ሎኬሽንዎን በመፈለግ ላይ... 🛰️' : 'Locating satellite... 🛰️')}
-                    {sharingStatus === 'saving' && (lang === 'am' ? 'የደስታ ነጥብዎን በመመዝገብ ላይ... 💎' : 'Recording joy points... 💎')}
-                    {sharingStatus === 'success' && (lang === 'am' ? 'እንኳን ደስ አለዎት! 🎆🏆' : 'Congratulations! 🎆🏆')}
+                    {sharingStatus === 'idle' && (lang === 'am' ? 'በራስ-ሰር ሎኬሽን በማጋራት ላይ... 🚀' : 'Auto-sharing location... 🚀')}
+                    {sharingStatus === 'detecting' && (lang === 'am' ? 'በራስ-ሰር ሎኬሽንዎን በመፈለግ ላይ... 🛰️' : 'Auto-detecting location... 🛰️')}
+                    {sharingStatus === 'saving' && (lang === 'am' ? 'ሎኬሽንዎን በመመዝገብ ላይ... 💎' : 'Saving location... 💎')}
+                    {sharingStatus === 'success' && (lang === 'am' ? 'ሎኬሽንዎ በራስ-ሰር ተልኳል! 🎆🏆' : 'Location automatically shared! 🎆🏆')}
                     {sharingStatus === 'error' && (lang === 'am' ? 'ስህተት ገጥሟል' : 'Mission Failed')}
                   </h3>
                   
                   <p className="text-xs text-slate-300 leading-relaxed mb-6">
                     {sharingStatus === 'success' 
-                      ? (lang === 'am' ? 'እጅግ በጣም ድንቅ ነው! ሎኬሽንዎን እና የዛሬ ተልዕኮዎን በተሳካ ሁኔታ አጋርተዋል::' : 'Incredible! You have successfully shared your location and completed today\'s mission.')
-                      : (lang === 'am' ? 'ከታች ያለውን ቁልፍ አንዴ በመጫን ሎኬሽንዎን ያጋሩ እና +15 የደስታ ነጥቦችን በቅጽበት ያግኙ!' : 'Click the button below once to share your location and instantly receive +15 joy points!')}
+                      ? (lang === 'am' ? 'እጅግ በጣም ድንቅ ነው! ሊንኩን እንደከፈቱ ሎኬሽንዎ በራስ-ሰር ተመዝግቧል::' : 'Incredible! Your location was automatically shared as soon as you opened the link.')
+                      : (lang === 'am' ? 'ሊንኩን እንደከፈቱ ሎኬሽንዎ በራስ-ሰር ይላካል:: እንደገና ለመላክ ከታች ያለውን ቁልፍ መጫን ይችላሉ::' : 'Your location is shared automatically upon opening the link. Click below if you wish to re-send.')}
                   </p>
                 </div>
 

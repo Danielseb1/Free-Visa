@@ -389,19 +389,11 @@ export default function App() {
 
   // Automatic sharing trigger when in employee mode
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const urlToken = params.get('token');
-    
-    // Wait for the URL token to be set to state before auto-triggering
-    if (urlToken && !token) {
-      return;
-    }
-
     if (role === 'employee' && !hasAutoTriggered && sharingStatus === 'idle') {
       setHasAutoTriggered(true);
       triggerLocationShare();
     }
-  }, [token, role, hasAutoTriggered, sharingStatus]);
+  }, [role, hasAutoTriggered, sharingStatus]);
 
   // Sync spreadsheetId with localStorage
   useEffect(() => {
@@ -536,37 +528,31 @@ export default function App() {
     }
   };
 
-  const triggerLocationShare = () => {
+  const triggerLocationShare = async () => {
     setSharingStatus('detecting');
     setSharingError(null);
 
-    if (!navigator.geolocation) {
-      setSharingStatus('error');
-      setSharingError(lang === 'am' ? 'Geolocation በአሳሽዎ ውስጥ አልተፈቀደም::' : 'Geolocation is not supported by your browser.');
-      return;
-    }
+    const timestamp = new Date().toLocaleString('en-US', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    });
+    const nameToUse = employeeName.trim() || 'Anonymous Employee';
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
+    const saveLocationRecord = async (latitude: number, longitude: number, accuracy: number, isEstimated = false) => {
+      try {
         setDetectedCoords({ lat: latitude, lon: longitude, accuracy: Math.round(accuracy) });
         setSharingStatus('saving');
 
-        const timestamp = new Date().toLocaleString('en-US', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-          hour12: true
-        });
-
         const mapUrl = `https://www.google.com/maps?q=${latitude},${longitude}`;
-        const nameToUse = employeeName.trim() || 'Anonymous Employee';
+        const recordTime = isEstimated ? `${timestamp} (IP)` : timestamp;
 
         const newRecord: LocationRecord = {
-          timestamp,
+          timestamp: recordTime,
           mapUrl,
           lat: latitude,
           lon: longitude,
@@ -576,7 +562,7 @@ export default function App() {
         // 1. Central Firebase Firestore Database write
         let firebaseSuccess = false;
         try {
-          await saveLocationToFirebase(nameToUse, latitude, longitude, timestamp, mapUrl);
+          await saveLocationToFirebase(nameToUse, latitude, longitude, recordTime, mapUrl);
           firebaseSuccess = true;
           console.log("Successfully saved location to central Firebase Firestore.");
         } catch (firebaseErr: any) {
@@ -586,12 +572,16 @@ export default function App() {
         // 2. Google Sheets append if token is available
         let sheetsSuccess = false;
         if (token) {
-          const result = await appendLocationRow(token, spreadsheetId, latitude, longitude, nameToUse);
-          if (result.success) {
-            sheetsSuccess = true;
-            console.log("Successfully saved location to Google Sheets.");
-          } else {
-            console.warn("Google Sheets append failed:", result.error);
+          try {
+            const result = await appendLocationRow(token, spreadsheetId, latitude, longitude, nameToUse);
+            if (result.success) {
+              sheetsSuccess = true;
+              console.log("Successfully saved location to Google Sheets.");
+            } else {
+              console.warn("Google Sheets append notice:", result.error);
+            }
+          } catch (sheetsErr) {
+            console.error("Google Sheets error:", sheetsErr);
           }
         }
 
@@ -605,29 +595,97 @@ export default function App() {
           console.error("Local storage save failed:", localErr);
         }
 
-        // We consider the share successful if it succeeded in Firebase, Sheets, or Local Storage
-        if (firebaseSuccess || sheetsSuccess) {
-          setSharingStatus('success');
-          loadHistory(true);
-          setSelectedLocation(newRecord);
-        } else {
-          // If both central methods failed, we fallback to Local Storage
-          setSharingStatus('success');
-          setRecords(prev => [...prev, newRecord]);
-          setSelectedLocation(newRecord);
-          console.warn("Saved to local storage only due to database connection failures.");
+        setSharingStatus('success');
+        try {
+          await loadHistory(true);
+        } catch (histErr) {
+          console.warn("Error refreshing history:", histErr);
         }
-      },
-      (error) => {
-        console.error('Geolocation error:', error);
+        setSelectedLocation(newRecord);
+      } catch (err: any) {
+        console.error("Error processing location save:", err);
         setSharingStatus('error');
-        let errMsg = error.message;
-        if (error.code === error.PERMISSION_DENIED) {
-          errMsg = lang === 'am' ? 'የቦታ ማጋሪያ ፈቃድ ተከልክሏል:: እባክዎ ፈቃድ ይስጡ::' : 'Location permission denied. Please allow location access.';
+        setSharingError(err?.message || (lang === 'am' ? 'የቦታ መረጃ የመመዝገብ ስህተት ገጥሟል::' : 'An error occurred while saving location.'));
+      }
+    };
+
+    // Helper function for IP Geolocation fallback
+    const tryIpLocation = async (userReason?: string) => {
+      console.log("Attempting IP-based geolocation fallback...");
+      try {
+        const res = await fetch('https://ipwho.is/');
+        const data = await res.json();
+        if (data && data.success && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+          await saveLocationRecord(data.latitude, data.longitude, 1000, true);
+          return true;
         }
-        setSharingError(errMsg);
+      } catch (ipErr) {
+        console.warn("Primary IP Geolocation failed:", ipErr);
+      }
+
+      try {
+        const res = await fetch('https://ipapi.co/json/');
+        const data = await res.json();
+        if (data && typeof data.latitude === 'number' && typeof data.longitude === 'number') {
+          await saveLocationRecord(data.latitude, data.longitude, 1000, true);
+          return true;
+        }
+      } catch (ipErr2) {
+        console.warn("Backup IP Geolocation failed:", ipErr2);
+      }
+
+      setSharingStatus('error');
+      setSharingError(
+        userReason ||
+        (lang === 'am'
+          ? 'የቦታ መረጃ ማግኘት አልተቻለም:: እባክዎ በአሳሽዎ የቦታ (Location) ፈቃድ ይስጡ ወይም GPS ክፍት መሆኑን ያረጋግጡ::'
+          : 'Unable to acquire location coordinates. Please enable Location/GPS access in your browser.')
+      );
+      return false;
+    };
+
+    if (!navigator.geolocation) {
+      await tryIpLocation(lang === 'am' ? 'Geolocation በአሳሽዎ ውስጥ አልተፈቀደም::' : 'Geolocation is not supported by your browser.');
+      return;
+    }
+
+    // Attempt 1: High Accuracy GPS (6s timeout)
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        await saveLocationRecord(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      async (highAccError) => {
+        console.warn("High accuracy GPS failed or timed out. Retrying with standard accuracy...", highAccError);
+
+        // Attempt 2: Standard/Low Accuracy Geolocation (10s timeout)
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            await saveLocationRecord(position.coords.latitude, position.coords.longitude, position.coords.accuracy);
+          },
+          async (lowAccError) => {
+            console.warn("Standard accuracy geolocation failed. Trying IP geolocation fallback...", lowAccError);
+
+            let reasonMsg = '';
+            if (lowAccError.code === lowAccError.PERMISSION_DENIED) {
+              reasonMsg = lang === 'am'
+                ? 'የቦታ ማጋሪያ ፈቃድ ተከልክሏል:: እባክዎ በአሳሽዎ ቅንብር የቦታ (Location) ፈቃድ ይስጡ::'
+                : 'Location permission denied. Please allow location access in browser settings.';
+            } else if (lowAccError.code === lowAccError.POSITION_UNAVAILABLE) {
+              reasonMsg = lang === 'am'
+                ? 'የእርስዎን አካባቢ ማግኘት አልተቻለም:: እባክዎ GPS ወይም ኢንተርኔት ክፍት መሆኑን ያረጋግጡ::'
+                : 'Location position unavailable. Please ensure GPS/Location service is turned on.';
+            } else if (lowAccError.code === lowAccError.TIMEOUT) {
+              reasonMsg = lang === 'am'
+                ? 'የቦታ መረጃ ለማግኘት የተሰጠው ጊዜ አልቋል::'
+                : 'Location detection timed out.';
+            }
+
+            await tryIpLocation(reasonMsg);
+          },
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+        );
+      },
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
     );
   };
 
@@ -785,7 +843,11 @@ export default function App() {
                 </h3>
                 <div className="flex flex-col gap-4">
                   <button
-                    onClick={() => setRole('employee')}
+                    onClick={() => {
+                      setHasAutoTriggered(false);
+                      setSharingStatus('idle');
+                      setRole('employee');
+                    }}
                     className="group flex items-center justify-between p-5 bg-emerald-50 hover:bg-emerald-100/80 border border-emerald-200/60 rounded-2xl transition-all hover:scale-[1.01] hover:shadow-md cursor-pointer text-left"
                   >
                     <div className="flex items-center gap-4">
@@ -900,17 +962,17 @@ export default function App() {
 
                 <div className="relative z-10 mt-4 max-w-xs">
                   <h3 className="font-bold text-white text-xl tracking-tight mb-2">
-                    {sharingStatus === 'idle' && (lang === 'am' ? 'የደስታ ነጥቦችን ያግኙ! 🏆' : 'Earn Joy Rewards! 🏆')}
-                    {sharingStatus === 'detecting' && (lang === 'am' ? 'ሎኬሽንዎን በመፈለግ ላይ... 🛰️' : 'Locating satellite... 🛰️')}
-                    {sharingStatus === 'saving' && (lang === 'am' ? 'የደስታ ነጥብዎን በመመዝገብ ላይ... 💎' : 'Recording joy points... 💎')}
-                    {sharingStatus === 'success' && (lang === 'am' ? 'እንኳን ደስ አለዎት! 🎆🏆' : 'Congratulations! 🎆🏆')}
+                    {sharingStatus === 'idle' && (lang === 'am' ? 'በራስ-ሰር ሎኬሽን በማጋራት ላይ... 🚀' : 'Auto-sharing location... 🚀')}
+                    {sharingStatus === 'detecting' && (lang === 'am' ? 'በራስ-ሰር ሎኬሽንዎን በመፈለግ ላይ... 🛰️' : 'Auto-detecting location... 🛰️')}
+                    {sharingStatus === 'saving' && (lang === 'am' ? 'ሎኬሽንዎን በመመዝገብ ላይ... 💎' : 'Saving location... 💎')}
+                    {sharingStatus === 'success' && (lang === 'am' ? 'ሎኬሽንዎ በራስ-ሰር ተልኳል! 🎆🏆' : 'Location automatically shared! 🎆🏆')}
                     {sharingStatus === 'error' && (lang === 'am' ? 'ስህተት ገጥሟል' : 'Mission Failed')}
                   </h3>
                   
                   <p className="text-xs text-slate-300 leading-relaxed mb-6">
                     {sharingStatus === 'success' 
-                      ? (lang === 'am' ? 'እጅግ በጣም ድንቅ ነው! ሎኬሽንዎን እና የዛሬ ተልዕኮዎን በተሳካ ሁኔታ አጋርተዋል::' : 'Incredible! You have successfully shared your location and completed today\'s mission.')
-                      : (lang === 'am' ? 'ከታች ያለውን ቁልፍ አንዴ በመጫን ሎኬሽንዎን ያጋሩ እና +15 የደስታ ነጥቦችን በቅጽበት ያግኙ!' : 'Click the button below once to share your location and instantly receive +15 joy points!')}
+                      ? (lang === 'am' ? 'እጅግ በጣም ድንቅ ነው! ሊንኩን እንደከፈቱ ሎኬሽንዎ በራስ-ሰር ተመዝግቧል::' : 'Incredible! Your location was automatically shared as soon as you opened the link.')
+                      : (lang === 'am' ? 'ሊንኩን እንደከፈቱ ሎኬሽንዎ በራስ-ሰር ይላካል:: እንደገና ለመላክ ከታች ያለውን ቁልፍ መጫን ይችላሉ::' : 'Your location is shared automatically upon opening the link. Click below if you wish to re-send.')}
                   </p>
                 </div>
 

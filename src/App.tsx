@@ -665,112 +665,54 @@ export default function App() {
             {/* Language Switcher */}
             <button
               onClick={toggleLanguage}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 border border-slate-200 transition-colors cursor-pointer"
             >
               <Globe className="w-3.5 h-3.5 text-slate-400" />
               <span>{lang === 'am' ? 'English' : 'አማርኛ'}</span>
             </button>
-
-            {/* User Session Profile / Login */}
-            {role !== 'employee' && !authLoading && (
-              <>
-                {user ? (
-                  <div className="flex items-center gap-2">
-                    {user.photoURL ? (
-                      <img 
-                        src={user.photoURL} 
-                        alt={user.displayName || 'Profile'} 
-                        className="w-8 h-8 rounded-full border border-emerald-500/30 shadow-inner"
-                        referrerPolicy="no-referrer"
-                      />
-                    ) : (
-                      <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 flex items-center justify-center font-bold text-sm">
-                        {user.displayName?.charAt(0) || user.email?.charAt(0) || 'U'}
-                      </div>
-                    )}
-                    <button
-                      onClick={handleLogout}
-                      className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 border border-red-100 rounded-lg transition-colors"
-                      title={t.signOut}
-                    >
-                      <LogOut className="w-3.5 h-3.5" />
-                      <span className="hidden sm:inline">{t.signOut}</span>
-                    </button>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleLogin}
-                    disabled={isLoggingIn}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg shadow-sm transition-all focus:outline-none"
-                    title={t.signIn}
-                  >
-                    {isLoggingIn ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
-                    ) : (
-                      <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-3.5 h-3.5">
-                        <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                        <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                        <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                        <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                      </svg>
-                    )}
-                    <span>{t.signIn}</span>
-                  </button>
-                )}
-              </>
-            )}
           </div>
         </div>
       </header>
 
-      {/* Hero Welcome banner if loading */}
-      {authLoading ? (
-        <div className="flex-1 flex flex-col items-center justify-center py-20">
-          <RefreshCw className="w-8 h-8 text-emerald-500 animate-spin mb-4" />
-          <p className="text-sm font-medium text-slate-500">{t.loadingAuth}</p>
-        </div>
-      ) : (
-        /* Authenticated Main App Workspace */
-        <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
-          
-          {/* Welcome User bar */}
-          {role !== 'employee' && (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold">
-                  {user ? '👋' : '📱'}
-                </div>
-                <div>
-                  <h3 className="font-semibold text-slate-900 text-sm sm:text-base">
-                    {user ? `${t.welcome}, ${user.displayName || user.email}!` : (lang === 'am' ? 'ያለ መግቢያ (የስልክ መዝገብ)' : 'Guest Mode (Local Storage)')}
-                  </h3>
-                  <p className="text-xs text-slate-500 flex items-center gap-1">
-                    <span className={`inline-block w-2 h-2 rounded-full animate-pulse ${user ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
-                    {user 
-                      ? `Connected to Google Account (${user.email})` 
-                      : (lang === 'am' 
-                          ? 'መረጃዎ በስልክዎ/አሳሽዎ ላይ ብቻ ነው የሚቀመጠው::' 
-                          : 'Your records are stored locally on your browser/device only')}
-                  </p>
-                </div>
+      {/* Main App Workspace */}
+      <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 flex flex-col gap-6">
+        
+        {/* Workspace Info Bar */}
+        {role !== 'employee' && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-600 font-bold text-lg">
+                🌐
               </div>
-
-              {/* Spreadsheet Switcher Trigger */}
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setShowSettings(!showSettings)}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${
-                    showSettings 
-                      ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
-                  }`}
-                >
-                  <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
-                  <span>{t.settings}</span>
-                </button>
+              <div>
+                <h3 className="font-bold text-slate-900 text-sm sm:text-base">
+                  {lang === 'am' ? 'የቀጥታ ማዕከላዊ ዳታቤዝ (Live Central Database)' : 'Live Central Database'}
+                </h3>
+                <p className="text-xs text-slate-500 flex items-center gap-1.5">
+                  <span className="inline-block w-2 h-2 rounded-full animate-pulse bg-emerald-500"></span>
+                  {lang === 'am' 
+                    ? 'ሁሉም የሰራተኞች ሎኬሽን ያለ መግቢያ በቀጥታ ወደ Firebase ዳታቤዝ ይላካል::' 
+                    : 'Employee locations are automatically synced to the central Firebase database without login.'}
+                </p>
               </div>
             </div>
-          )}
+
+            {/* Settings Toggle Trigger */}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                  showSettings 
+                    ? 'bg-slate-800 border-slate-800 text-white shadow-sm' 
+                    : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
+                }`}
+              >
+                <Settings className={`w-3.5 h-3.5 ${showSettings ? 'animate-spin-slow' : ''}`} />
+                <span>{t.settings}</span>
+              </button>
+            </div>
+          </div>
+        )}
 
           {/* Collapsible Spreadsheet Configuration card */}
           <AnimatePresence>
@@ -1090,60 +1032,13 @@ export default function App() {
             </div>
           )}
 
-          {role === 'admin' && !user && (
-            <div className="max-w-md mx-auto w-full my-8">
-              <motion.div
-                initial={{ opacity: 0, y: 15 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bg-white rounded-3xl border border-slate-200/80 shadow-xl p-8 text-center flex flex-col items-center"
-              >
-                <div className="bg-slate-50 text-slate-700 p-4 rounded-full border border-slate-100 mb-4">
-                  <Compass className="w-10 h-10 text-emerald-500 animate-spin-slow" />
-                </div>
-                <h3 className="text-xl font-bold text-slate-900 mb-2">
-                  {lang === 'am' ? 'የአድሚን መግቢያ' : 'Admin Portal'}
-                </h3>
-                <p className="text-xs text-slate-500 mb-6 leading-relaxed max-w-xs">
-                  {lang === 'am' 
-                    ? 'የሰራተኞችን የቦታ ታሪክ እና ካርታ ለመመልከት እባክዎ በGoogle መለያዎ ይግቡ::' 
-                    : 'Please sign in with your Google account to access employee coordinates and live tracking map.'}
-                </p>
-                <button
-                  onClick={handleLogin}
-                  disabled={isLoggingIn}
-                  className="w-full bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-semibold py-3.5 px-6 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3 cursor-pointer text-sm"
-                >
-                  {isLoggingIn ? (
-                    <RefreshCw className="w-4 h-4 animate-spin text-white" />
-                  ) : (
-                    <svg version="1.1" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" className="w-4 h-4">
-                      <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path>
-                      <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"></path>
-                      <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path>
-                      <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path>
-                    </svg>
-                  )}
-                  <span>{isLoggingIn ? (lang === 'am' ? 'በመግባት ላይ...' : 'Signing in...') : t.signIn}</span>
-                </button>
-
-                <button
-                  onClick={() => setRole('selection')}
-                  className="mt-4 flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800"
-                >
-                  <ChevronRight className="w-4 h-4 rotate-180" />
-                  <span>{t.changeRole}</span>
-                </button>
-              </motion.div>
-            </div>
-          )}
-
-          {role === 'admin' && user && (
+          {role === 'admin' && (
             <div className="flex flex-col gap-6">
               {/* Back to selection & real-time checking indicator */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <button
                   onClick={() => setRole('selection')}
-                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 self-start"
+                  className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 self-start cursor-pointer"
                 >
                   <ChevronRight className="w-4 h-4 rotate-180" />
                   <span>{t.changeRole}</span>
@@ -1179,13 +1074,11 @@ export default function App() {
                 </div>
                 <div className="flex items-center gap-2 bg-white border border-emerald-200/60 p-1.5 rounded-xl self-stretch sm:self-center">
                   <span className="text-xs font-mono text-slate-600 truncate max-w-[180px] sm:max-w-[240px] px-2">
-                    {`${window.location.origin}${window.location.pathname}?role=employee${token ? '&token=authorized' : ''}`}
+                    {`${window.location.origin}${window.location.pathname}?role=employee`}
                   </span>
                   <button
                     onClick={() => {
-                      const shareUrl = `${window.location.origin}${window.location.pathname}?role=employee` + 
-                        (token ? `&token=${encodeURIComponent(token)}` : '') + 
-                        (spreadsheetId ? `&sheetId=${encodeURIComponent(spreadsheetId)}` : '');
+                      const shareUrl = `${window.location.origin}${window.location.pathname}?role=employee`;
                       navigator.clipboard.writeText(shareUrl);
                       setCopyLinkNotification(true);
                       setTimeout(() => setCopyLinkNotification(false), 2500);
@@ -1537,7 +1430,6 @@ export default function App() {
             </div>
           )}
         </main>
-      )}
 
       {/* Footer copyright */}
       <footer className="mt-auto py-6 border-t border-slate-200/60 bg-white">
